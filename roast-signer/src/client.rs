@@ -1,3 +1,5 @@
+use std::{collections::HashMap, hash::Hash};
+
 use secp256kfun::{digest::typenum::U32, marker::Public, Scalar};
 
 use schnorr_fun::{
@@ -8,32 +10,37 @@ use schnorr_fun::{
 };
 use sha2::Digest;
 
-use crate::roast_coordinator::RoastServer;
+use roast_coordinator;
 
-struct RoastClient<'a, H, NG> {
+pub struct RoastClient<'a, H, NG> {
     roast_server: RoastServer<'a, H, NG>,
     frost: Frost<H, NG>,
     frost_key: XOnlyFrostKey,
     my_index: usize,
     secret_share: Scalar,
     message: Message<'a, Public>,
-    nonce: NonceKeyPair,
+    my_nonces: Vec<NonceKeyPair>,
 }
 
 impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastClient<'a, H, NG> {
     pub async fn start(
-        self,
         roast_server: RoastServer<'a, H, NG>,
         frost: Frost<H, NG>,
         frost_key: XOnlyFrostKey,
         my_index: usize,
         secret_share: Scalar,
-        initial_nonce: NonceKeyPair,
+        initial_nonce_sid: &[u8],
         message: Message<'a>,
     ) -> RoastClient<'a, H, NG> {
-        let (combined_sig, nonce_set) = self
-            .roast_server
-            .receive_signature(self.my_index, None, initial_nonce.public)
+        let initial_nonce = frost.gen_nonce(
+            &secret_share,
+            &initial_nonce_sid,
+            Some(frost_key.public_key().normalize()),
+            Some(message),
+        );
+
+        let (combined_sig, nonce_set) = roast_server
+            .receive_signature(my_index, None, initial_nonce.public)
             .await;
 
         match combined_sig {
@@ -50,6 +57,11 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastClient
             }
             None => println!("No new nonces!?"),
         };
+
+        // let mut my_nonces = HashMap::new();
+        // my_nonces.insert(0 as usize, initial_nonce);
+        let my_nonces = vec![initial_nonce];
+
         RoastClient {
             roast_server,
             frost,
@@ -57,7 +69,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastClient
             my_index,
             secret_share,
             message,
-            nonce: initial_nonce,
+            my_nonces,
         }
     }
 
@@ -76,20 +88,28 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastClient
             nonce_set,
             Message::plain("test", b"test"),
         );
+        let my_nonce = self
+            .my_nonces
+            .pop()
+            .expect("some nonce available to use for signing");
         let sig = self.frost.sign(
             &self.frost_key,
             &session,
             self.my_index,
             &self.secret_share,
-            self.nonce.clone(),
+            my_nonce,
         );
         // call server with (sig, self.new_nonce())
 
-        self.nonce = self.new_nonce(&[0]);
+        self.my_nonces.push(self.new_nonce(&[0]));
 
         let (combined_sig, nonce_set) = self
             .roast_server
-            .receive_signature(self.my_index, Some(sig), self.nonce.public())
+            .receive_signature(
+                self.my_index,
+                Some(sig),
+                self.my_nonces.last().expect("some nonce").public(),
+            )
             .await;
 
         match combined_sig {
