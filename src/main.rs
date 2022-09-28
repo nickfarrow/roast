@@ -62,7 +62,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Roast<'a, H, NG> {
         };
     }
 
-    pub fn mark_malicious(&self, index: &usize) {
+    pub async fn mark_malicious(&self, index: &usize) {
         let mut roast_state = self.state.lock().expect("got lock");
         roast_state.malicious_signers.insert(*index);
         if roast_state.malicious_signers.len() >= self.frost_key.threshold() {
@@ -70,43 +70,49 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Roast<'a, H, NG> {
         }
     }
 
-    pub fn create_signature(
-        self,
-        secret_share: &Scalar,
-        secret_nonce: NonceKeyPair,
-        my_index: usize,
-        nonces: Vec<(usize, Nonce)>,
-        message: Message<'_>,
-    ) -> Scalar<Public, Zero> {
-        let session = self
-            .frost
-            .start_sign_session(&self.frost_key, nonces, message);
-        self.frost.sign(
-            &self.frost_key,
-            &session,
-            my_index,
-            secret_share,
-            secret_nonce,
-        )
-    }
+    /// Running roast as a signer
+    // pub fn create_signature(
+    //     self,
+    //     secret_share: &Scalar,
+    //     secret_nonce: NonceKeyPair,
+    //     my_index: usize,
+    //     nonces: Vec<(usize, Nonce)>,
+    //     message: Message<'_>,
+    // ) -> Scalar<Public, Zero> {
+    //     let session = self
+    //         .frost
+    //         .start_sign_session(&self.frost_key, nonces, message);
+    //     self.frost.sign(
+    //         &self.frost_key,
+    //         &session,
+    //         my_index,
+    //         secret_share,
+    //         secret_nonce,
+    //     )
+    // }
 
+    // Main body of the ROAST coordinator algorithm
     pub async fn recieve_signature(
         &self,
         index: usize,
-        signature_share: Scalar<Public, Zero>,
+        signature_share: Option<Scalar<Public, Zero>>,
         new_nonce: Nonce,
-    ) -> Option<Signature> {
+    ) -> (Option<Signature>, Option<Vec<(usize, Nonce)>>) {
         let mut roast_state = self.state.lock().expect("got lock");
 
-        // if index is malicious then return
         if roast_state.malicious_signers.contains(&index) {
-            return None;
+            println!("Malicious signer tried to send signature! {}", index);
+            return (None, None);
         }
 
-        // if this was an unsolicited reply mark malicious
+        dbg!(roast_state.responsive_signers.clone());
         if roast_state.responsive_signers.contains(&index) {
-            self.mark_malicious(&index);
-            return None;
+            println!(
+                "Unsolicited reply from signer {}, marking malicious.",
+                index
+            );
+            self.mark_malicious(&index).await;
+            return (None, None);
         }
 
         // If this is not the inital message from S_i
@@ -124,26 +130,33 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Roast<'a, H, NG> {
                 roast_state.message,
             );
 
-            if !self
-                .frost
-                .verify_signature_share(&self.frost_key, &session, index, signature_share)
-            {
-                self.mark_malicious(&index);
-                return None;
+            if !self.frost.verify_signature_share(
+                &self.frost_key,
+                &session,
+                index,
+                signature_share.expect("party provided None signature share"),
+            ) {
+                println!("Invalid signature, marking {} malicious.", index);
+                self.mark_malicious(&index).await;
+                return (None, None);
             }
 
             // Store valid signature
-            roast_session.sig_shares.push(signature_share);
+            roast_session
+                .sig_shares
+                .push(signature_share.expect("party provided None signature share"));
+            println!("New signature from party {}", index);
 
             // if we have t-of-n, combine!
             if roast_session.sig_shares.len() >= self.frost_key.threshold() {
+                println!("We have the threshold number of signatures, combining!");
                 let combined_sig = self.frost.combine_signature_shares(
                     &self.frost_key,
                     &session,
                     roast_session.sig_shares.clone(),
                 );
                 // return combined signature
-                return Some(combined_sig);
+                return (Some(combined_sig), None);
             }
         }
 
@@ -155,6 +168,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Roast<'a, H, NG> {
 
         // if we now have t responsive signers:
         if roast_state.responsive_signers.len() >= self.frost_key.threshold() {
+            println!("We now have threshold number of responsive signers!");
             roast_state.session_counter += 1;
             // build the presignature (aggregate the nonces).
             let r_signers = roast_state.responsive_signers.clone();
@@ -184,22 +198,33 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Roast<'a, H, NG> {
                         sig_shares: vec![],
                     })),
                 );
-                // SEND NONCES AND R
-                // (if we are running ourselves then we sign too after communicating!)
+                let nonces = roast_state
+                    .latest_nonces
+                    .iter()
+                    .map(|(i, nonce)| (*i, *nonce))
+                    .collect();
+                println!("Responding with nonces:");
+                // DO THIS FOR EVERY S_i...>!>!> need async
+
+                // OPEN MANY THREADS AND THEN AWAIT COLLECTION
+                return (None, Some(nonces));
             }
         }
 
         // Return None if we get to here?
         // Better API would be return the number of remaining signatures or th remaining signature if complete.
         // Non complex RecieveSigResponse Result
-        None
+        (None, None)
     }
 }
 
-fn main() {
+// use mini_redis::{client, Result};
+
+#[tokio::main]
+async fn main() {
     // Do frost keygen for 9-of-15
-    let threshold: usize = 9;
-    let n_parties: usize = 15;
+    let threshold: usize = 2;
+    let n_parties: usize = 3;
 
     let frost = Frost::new(Schnorr::<Sha256, Deterministic<Sha256>>::new(
         Deterministic::<Sha256>::default(),
@@ -267,148 +292,118 @@ fn main() {
         .unzip();
     println!("Finished keygen!");
 
-    // Now time for ROAST
-    let message = Message::plain("test", b"test");
-    let roast1 = Roast::new(frost.clone(), frost_keys[0].clone(), message);
-    let roast2 = Roast::new(frost.clone(), frost_keys[1].clone(), message);
+    // use a boolean mask for which t participants are signers
+    let mut signer_mask = vec![true; threshold];
+    signer_mask.append(&mut vec![false; n_parties - threshold]);
+    // shuffle the mask for random signers
 
-    let verification_shares_bytes: Vec<_> = frost_keys[0]
+    let signer_indexes: Vec<_> = signer_mask
+        .iter()
+        .enumerate()
+        .filter(|(_, is_signer)| **is_signer)
+        .map(|(i, _)| i)
+        .collect();
+
+    println!("Preparing for signing session...");
+
+    let verification_shares_bytes: Vec<_> = frost_keys[signer_indexes[0]]
         .verification_shares()
         .map(|share| share.to_bytes())
         .collect();
 
     let sid = [
-        frost_keys[0].public_key().to_xonly_bytes().as_slice(),
+        frost_keys[signer_indexes[0]]
+            .public_key()
+            .to_xonly_bytes()
+            .as_slice(),
         verification_shares_bytes.concat().as_slice(),
         b"frost-prop-test".as_slice(),
     ]
     .concat();
 
-    let nonces: Vec<NonceKeyPair> = (0..n_parties)
+    let mut nonces: Vec<NonceKeyPair> = signer_indexes
+        .iter()
         .map(|i| {
-            let nonce = frost.gen_nonce(
-                &secret_shares[i],
-                &sid,
-                Some(frost_keys[i].public_key().normalize()),
+            frost.gen_nonce(
+                &secret_shares[*i],
+                &[sid.as_slice(), [*i as u8].as_slice()].concat(),
+                Some(frost_keys[signer_indexes[0]].public_key().normalize()),
                 None,
-            );
-
-            nonce
+            )
         })
         .collect();
 
-    let pub_nonces: Vec<_> = nonces
-        .iter()
-        .enumerate()
-        .map(|(i, nonce)| (i, nonce.public()))
-        .collect();
+    let mut recieved_nonces: Vec<_> = vec![];
+    for (i, nonce) in signer_indexes.iter().zip(nonces.clone()) {
+        recieved_nonces.push((*i, nonce.public()));
+    }
+    println!("Recieved nonces..");
 
-    let sig1 = roast1.create_signature(
-        &secret_shares[0],
-        nonces[0].clone(),
-        0,
-        pub_nonces.clone(),
-        message,
-    );
+    // Now time for ROAST
 
-    let next_nonce = frost.gen_nonce(
-        &secret_shares[0],
-        &sid,
-        Some(frost_keys[0].public_key().normalize()),
-        None,
-    );
-    roast1.recieve_signature(0, sig1, next_nonce).await;
-    // let sig2 =
-    //     roast2.create_signature(&secret_shares[1], nonces[1].clone(), 1, pub_nonces, message);
+    // Test roast being run by 1 external party -> frost_key contains public data
+    let message = Message::plain("test", b"test");
+    let roast = Roast::new(frost.clone(), frost_keys[0].clone(), message);
+
+    let mut counter = 0;
+    loop {
+        for i in 0..signer_indexes.len() {
+            let current_nonce = nonces[i].clone();
+            let next_nonce = frost.gen_nonce(
+                &secret_shares[i],
+                &[sid.clone(), [counter].to_vec()].concat(),
+                Some(frost_keys[i].public_key().normalize()),
+                None,
+            );
+            nonces[i] = next_nonce.clone();
+
+            let (sig, new_nonces) = if counter == 0 {
+                // Initial sending empty sig with nonces
+                roast.recieve_signature(i, None, next_nonce.public()).await
+            } else {
+                println!("Signing for participant {}", signer_indexes[i]);
+                let signer_index = signer_indexes[i];
+                let session = frost.start_sign_session(
+                    &frost_keys[signer_index],
+                    recieved_nonces.clone(),
+                    Message::plain("test", b"test"),
+                );
+                let sig = frost.sign(
+                    &frost_keys[signer_index],
+                    &session,
+                    signer_index,
+                    &secret_shares[signer_index],
+                    current_nonce.clone(),
+                );
+                roast
+                    .recieve_signature(i, Some(sig), next_nonce.public())
+                    .await
+            };
+
+            // Hangs if you always send same index
+            match sig {
+                Some(combined_sig) => {
+                    assert!(frost.schnorr.verify(
+                        &frost_keys[signer_indexes[i]].public_key(),
+                        Message::<Public>::plain("test", b"test"),
+                        &combined_sig
+                    ));
+                    println!("Signed via roast!");
+                    break;
+                }
+                None => {
+                    println!("Sent partial signature {} to roast..", i)
+                }
+            };
+            match new_nonces {
+                Some(nonces) => {
+                    recieved_nonces = nonces.clone();
+                    println!("Got new nonces {:?}", nonces);
+                }
+                None => println!("No new nonces!?"),
+            }
+            println!("Current nonces {:?}", recieved_nonces.clone());
+        }
+        counter += 1;
+    }
 }
-//     println!("selecting signers...");
-
-//     // use a boolean mask for which t participants are signers
-//     let mut signer_mask = vec![true; threshold];
-//     signer_mask.append(&mut vec![false; n_parties - threshold]);
-//     // shuffle the mask for random signers
-
-//     let signer_indexes: Vec<_> = signer_mask
-//         .iter()
-//         .enumerate()
-//         .filter(|(_, is_signer)| **is_signer)
-//         .map(|(i, _)| i)
-//         .collect();
-
-//     println!("Preparing for signing session...");
-
-//     let verification_shares_bytes: Vec<_> = frost_keys[signer_indexes[0]]
-//         .verification_shares()
-//         .map(|share| share.to_bytes())
-//         .collect();
-
-//     let sid = [
-//         frost_keys[signer_indexes[0]]
-//             .public_key()
-//             .to_xonly_bytes()
-//             .as_slice(),
-//         verification_shares_bytes.concat().as_slice(),
-//         b"frost-prop-test".as_slice(),
-//     ]
-//     .concat();
-//     let nonces: Vec<NonceKeyPair> = signer_indexes
-//         .iter()
-//         .map(|i| {
-//             frost.gen_nonce(
-//                 &secret_shares[*i],
-//                 &[sid.as_slice(), [*i as u8].as_slice()].concat(),
-//                 Some(frost_keys[signer_indexes[0]].public_key().normalize()),
-//                 None,
-//             )
-//         })
-//         .collect();
-
-//     let mut recieved_nonces: Vec<_> = vec![];
-//     for (i, nonce) in signer_indexes.iter().zip(nonces.clone()) {
-//         recieved_nonces.push((*i, nonce.public()));
-//     }
-//     println!("Recieved nonces..");
-
-//     // Create Frost signing session
-//     let signing_session = frost.start_sign_session(
-//         &frost_keys[signer_indexes[0]],
-//         recieved_nonces.clone(),
-//         Message::plain("test", b"test"),
-//     );
-
-//     let mut signatures = vec![];
-//     for i in 0..signer_indexes.len() {
-//         println!("Signing for participant {}", signer_indexes[i]);
-//         let signer_index = signer_indexes[i];
-//         let session = frost.start_sign_session(
-//             &frost_keys[signer_index],
-//             recieved_nonces.clone(),
-//             Message::plain("test", b"test"),
-//         );
-//         let sig = frost.sign(
-//             &frost_keys[signer_index],
-//             &session,
-//             signer_index,
-//             &secret_shares[signer_index],
-//             nonces[i].clone(),
-//         );
-//         assert!(frost.verify_signature_share(
-//             &frost_keys[signer_index],
-//             &session,
-//             signer_index,
-//             sig
-//         ));
-//         signatures.push(sig);
-//     }
-//     let combined_sig = frost.combine_signature_shares(
-//         &frost_keys[signer_indexes[0]],
-//         &signing_session,
-//         signatures,
-//     );
-
-//     assert!(frost.schnorr.verify(
-//         &frost_keys[signer_indexes[0]].public_key(),
-//         Message::<Public>::plain("test", b"test"),
-//         &combined_sig
-//     ));
-// }
