@@ -1,3 +1,10 @@
+Experimental
+-> unfishished and not ready for use
+
+## todo
+Make agnostic to the threshold signature scheme that is used
+
+
 ## ROAST Paper Notes
 [paper](https://eprint.iacr.org/2022/550.pdf)
 
