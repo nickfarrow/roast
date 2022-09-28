@@ -1,2 +1,3 @@
 /target
-roast-signer/target/
+roastlib/target/
+server-client/target/

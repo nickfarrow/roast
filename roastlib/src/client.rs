@@ -1,6 +1,8 @@
-use std::{collections::HashMap, hash::Hash};
-
-use secp256kfun::{digest::typenum::U32, marker::Public, Scalar};
+use secp256kfun::{
+    digest::typenum::U32,
+    marker::{Public, Zero},
+    Scalar,
+};
 
 use schnorr_fun::{
     frost::{Frost, XOnlyFrostKey},
@@ -10,10 +12,7 @@ use schnorr_fun::{
 };
 use sha2::Digest;
 
-use roast_coordinator;
-
 pub struct RoastClient<'a, H, NG> {
-    roast_server: RoastServer<'a, H, NG>,
     frost: Frost<H, NG>,
     frost_key: XOnlyFrostKey,
     my_index: usize,
@@ -23,8 +22,7 @@ pub struct RoastClient<'a, H, NG> {
 }
 
 impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastClient<'a, H, NG> {
-    pub async fn start(
-        roast_server: RoastServer<'a, H, NG>,
+    pub fn new(
         frost: Frost<H, NG>,
         frost_key: XOnlyFrostKey,
         my_index: usize,
@@ -38,32 +36,9 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastClient
             Some(frost_key.public_key().normalize()),
             Some(message),
         );
-
-        let (combined_sig, nonce_set) = roast_server
-            .receive_signature(my_index, None, initial_nonce.public)
-            .await;
-
-        match combined_sig {
-            Some(_) => {
-                println!("got combined sig!");
-            }
-            None => {
-                // println!("Sent partial signature {} to roast..", i)
-            }
-        };
-        match nonce_set {
-            Some(nonces) => {
-                println!("Got nonces {:?}", nonces);
-            }
-            None => println!("No new nonces!?"),
-        };
-
-        // let mut my_nonces = HashMap::new();
-        // my_nonces.insert(0 as usize, initial_nonce);
         let my_nonces = vec![initial_nonce];
 
         RoastClient {
-            roast_server,
             frost,
             frost_key,
             my_index,
@@ -82,7 +57,17 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastClient
         )
     }
 
-    pub async fn sign(&mut self, nonce_set: Vec<(usize, Nonce)>) {
+    pub fn start(self) -> (Option<Scalar<Public, Zero>>, Nonce) {
+        (
+            None,
+            self.my_nonces.last().expect("some nonce").clone().public(),
+        )
+    }
+
+    pub fn sign(
+        &mut self,
+        nonce_set: Vec<(usize, Nonce)>,
+    ) -> (Option<Scalar<Public, Zero>>, Nonce) {
         let session = self.frost.start_sign_session(
             &self.frost_key,
             nonce_set,
@@ -100,31 +85,46 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastClient
             my_nonce,
         );
         // call server with (sig, self.new_nonce())
-
         self.my_nonces.push(self.new_nonce(&[0]));
 
-        let (combined_sig, nonce_set) = self
-            .roast_server
-            .receive_signature(
-                self.my_index,
-                Some(sig),
-                self.my_nonces.last().expect("some nonce").public(),
-            )
-            .await;
-
-        match combined_sig {
-            Some(_) => {
-                println!("got combined sig!");
-            }
-            None => {
-                // println!("Sent partial signature {} to roast..", i)
-            }
-        };
-        match nonce_set {
-            Some(nonces) => {
-                println!("Got nonces {:?}", nonces);
-            }
-            None => println!("No new nonces!?"),
-        };
+        (
+            Some(sig),
+            self.my_nonces.last().expect("some nonce").public(),
+        )
     }
 }
+
+// OLD HTTP TRASH
+//
+//
+// HTTP call roast_server receive
+// let (combined_sig, nonce_set) =
+// let request_url = roast_server.clone()
+//     + "/init?"
+//     + &serde_json::to_string(&frost_key).expect("valid serialization");
+// let response = reqwest::get(&request_url).await.expect("valid request");
+// dbg!(response);
+
+// roast_server
+//     .receive_signature(my_index, None, initial_nonce.public)
+//     .await;
+
+// match combined_sig {
+//     Some(_) => {
+//         println!("got combined sig!");
+//     }
+//     None => {
+//         // println!("Sent partial signature {} to roast..", i)
+//     }
+// };
+// match nonce_set {
+//     Some(nonces) => {
+//         println!("Got nonces {:?}", nonces);
+//     }
+//     None => println!("No new nonces!?"),
+// };
+
+// let mut my_nonces = HashMap::new();
+// my_nonces.insert(0 as usize, initial_nonce);
+
+// pub async fn sign

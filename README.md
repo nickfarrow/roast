@@ -2,9 +2,10 @@ Experimental
 -> unfishished and not ready for use
 
 ## todo
-Complete endpoints for both ROAST server (coordinator) and signer clients using new layout, then use them to communicate a test session.
+Finish roastlib and test without specifying any io methods from client to server
+
+Create communication endpoints for both ROAST server (coordinator) and signer clients using new layout, then use them to communicate a test session.
 * Current plan is to communicate via http requests and rocket with some mutable state for client and server.
-* This would be powerful for later things if we get it right..
 Make agnostic to the threshold signature scheme that is used
 
 ## ROAST Paper Notes

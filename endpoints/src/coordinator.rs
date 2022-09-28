@@ -3,11 +3,11 @@
 #[macro_use]
 extern crate rocket;
 
+use roast::coordinator::RoastServer;
 use rocket::{Rocket, State};
 use schnorr_fun::musig::Nonce;
 use std::{error::Error, sync::Mutex};
 
-use roast::coordinator::RoastServer;
 use schnorr_fun::frost::Frost;
 use schnorr_fun::nonce::Deterministic;
 use schnorr_fun::{Message, Schnorr};
@@ -47,16 +47,13 @@ pub async fn receive_signature(
 #[rocket::main]
 pub async fn main() -> () {
     let res = rocket::build()
-        .manage({
-            let frost = Frost::new(Schnorr::<Sha256, Deterministic<Sha256>>::new(
+        .manage(Mutex::new(RoastServer::new(
+            Frost::new(Schnorr::<Sha256, Deterministic<Sha256>>::new(
                 Deterministic::<Sha256>::default(),
-            ));
-            Mutex::new(RoastServer::new(
-                frost,
-                None,
-                Message::plain("test", b"test"),
-            ))
-        })
+            )),
+            None,
+            Message::plain("test", b"test"),
+        )))
         .mount("/", routes![receive_signature])
         .launch()
         .await;

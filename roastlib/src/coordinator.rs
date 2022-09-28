@@ -17,9 +17,9 @@ use schnorr_fun::{
 };
 use sha2::Digest;
 
-pub struct RoastServer<'a, H, NG> {
+pub struct Coordinator<'a, H, NG> {
     pub frost: Frost<H, NG>,
-    pub frost_key: Option<XOnlyFrostKey>,
+    pub frost_key: XOnlyFrostKey,
     state: Arc<Mutex<RoastState<'a>>>,
 }
 
@@ -38,10 +38,10 @@ pub struct RoastSignSession {
     sig_shares: Vec<Scalar<Public, Zero>>,
 }
 
-impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> RoastServer<'a, H, NG> {
+impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG> {
     pub fn new(
         frost: Frost<H, NG>,
-        frost_key: Option<XOnlyFrostKey>,
+        frost_key: XOnlyFrostKey,
         message: Message<'a, Public>,
     ) -> Self {
         return Self {
@@ -61,38 +61,13 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> RoastServer<'a, H, NG
     pub fn mark_malicious(&self, index: &usize) {
         let mut roast_state = self.state.lock().expect("got lock");
         roast_state.malicious_signers.insert(*index);
-        if roast_state.malicious_signers.len()
-            >= self.frost_key.clone().expect("initialised").threshold()
-        {
+        if roast_state.malicious_signers.len() >= self.frost_key.clone().threshold() {
             panic!("not enough singers left to continue!");
         }
     }
 
-    // // Running roast as signer
-    // pub fn create_signature(
-    //     self,
-    //     secret_share: &Scalar,
-    //     secret_nonce: NonceKeyPair,
-    //     my_index: usize,
-    //     nonces: Vec<(usize, Nonce)>,
-    //     message: Message<'_>,
-    // ) -> Scalar<Public, Zero> {
-    //     let session = self.frost.start_sign_session(
-    //         &self.frost_key.clone().expect("initialised"),
-    //         nonces,
-    //         message,
-    //     );
-    //     self.frost.sign(
-    //         &self.frost_key.clone().expect("initialised"),
-    //         &session,
-    //         my_index,
-    //         secret_share,
-    //         secret_nonce,
-    //     )
-    // }
-
     // Main body of the ROAST coordinator algorithm
-    pub async fn receive_signature(
+    pub fn receive_signature(
         &self,
         index: usize,
         signature_share: Option<Scalar<Public, Zero>>,
@@ -124,13 +99,13 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> RoastServer<'a, H, NG
                 .expect("got lock");
 
             let session = self.frost.start_sign_session(
-                &self.frost_key.clone().expect("initialised"),
+                &self.frost_key.clone(),
                 roast_session.nonces.clone(),
                 roast_state.message,
             );
 
             if !self.frost.verify_signature_share(
-                &self.frost_key.clone().expect("initialised"),
+                &self.frost_key.clone(),
                 &session,
                 index,
                 signature_share.expect("party provided None signature share"),
@@ -147,12 +122,10 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> RoastServer<'a, H, NG
             println!("New signature from party {}", index);
 
             // if we have t-of-n, combine!
-            if roast_session.sig_shares.len()
-                >= self.frost_key.clone().expect("initialised").threshold()
-            {
+            if roast_session.sig_shares.len() >= self.frost_key.clone().threshold() {
                 println!("We have the threshold number of signatures, combining!");
                 let combined_sig = self.frost.combine_signature_shares(
-                    &self.frost_key.clone().expect("initialised"),
+                    &self.frost_key.clone(),
                     &session,
                     roast_session.sig_shares.clone(),
                 );
@@ -168,9 +141,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> RoastServer<'a, H, NG
         roast_state.responsive_signers.insert(index);
 
         // if we now have t responsive signers:
-        if roast_state.responsive_signers.len()
-            >= self.frost_key.clone().expect("initialised").threshold()
-        {
+        if roast_state.responsive_signers.len() >= self.frost_key.clone().threshold() {
             println!("We now have threshold number of responsive signers!");
             roast_state.session_counter += 1;
             // build the presignature (aggregate the nonces).
