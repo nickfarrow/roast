@@ -59,13 +59,12 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
         };
     }
 
-    pub fn mark_malicious(&self, index: &usize) {
-        let mut roast_state = self.state.lock().expect("got lock");
-        roast_state.malicious_signers.insert(*index);
-        if roast_state.malicious_signers.len() >= self.frost_key.clone().threshold() {
-            panic!("not enough singers left to continue!");
-        }
-    }
+    // pub fn mark_malicious(self, roast_state: &mut MutexGuard<RoastState>, index: &usize) {
+    //     roast_state.malicious_signers.insert(*index);
+    //     if roast_state.malicious_signers.len() >= self.frost_key.clone().threshold() {
+    //         panic!("not enough singers left to continue!");
+    //     }
+    // }
 
     // Main body of the ROAST coordinator algorithm
     pub fn process(
@@ -86,25 +85,35 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                 "Unsolicited reply from signer {}, marking malicious.",
                 index
             );
-            self.mark_malicious(&index);
+
+            // Mark malicious
+            roast_state.malicious_signers.insert(index);
+            if roast_state.malicious_signers.len() >= self.frost_key.clone().threshold() {
+                panic!("not enough singers left to continue!");
+            }
+
             return (None, None);
         }
 
         // If this is not the inital message from S_i
         match roast_state.signer_session_map.get(&index) {
             Some(session_id) => {
-                let mut roast_session = roast_state
-                    .sessions
-                    .get(&session_id)
-                    .unwrap()
-                    .lock()
-                    .expect("got lock");
+                // Get session from roast_state
+                let session = {
+                    let roast_session = roast_state
+                        .sessions
+                        .get(&session_id)
+                        .unwrap()
+                        .lock()
+                        .expect("got lock");
 
-                let session = self.frost.start_sign_session(
-                    &self.frost_key.clone(),
-                    roast_session.nonces.clone(),
-                    roast_state.message,
-                );
+                    self.frost.start_sign_session(
+                        &self.frost_key.clone(),
+                        roast_session.nonces.clone(),
+                        roast_state.message,
+                    )
+                };
+                println!("Party {} is loading signing session {}", index, session_id);
 
                 // dbg!(&self.frost_key.clone(), &session, index, signature_share);
 
@@ -112,12 +121,24 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                     &self.frost_key.clone(),
                     &session,
                     index,
-                    signature_share.expect("party provided None signature share"),
+                    signature_share.expect("party unexpectedly provided None signature share"),
                 ) {
                     println!("Invalid signature, marking {} malicious.", index);
-                    self.mark_malicious(&index);
+                    roast_state.malicious_signers.insert(index);
+                    if roast_state.malicious_signers.len() >= self.frost_key.clone().threshold() {
+                        panic!("not enough singers left to continue!");
+                    }
+
                     return (None, None);
                 }
+
+                // Reopen session within the roast state for writting
+                let mut roast_session = roast_state
+                    .sessions
+                    .get(&session_id)
+                    .unwrap()
+                    .lock()
+                    .expect("got lock");
 
                 // Store valid signature
                 roast_session

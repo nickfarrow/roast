@@ -1,18 +1,74 @@
-Experimental
--> unfishished and not ready for use
+# roast for secp256kfun [frost](https://github.com/LLFourn/secp256kfun/blob/master/schnorr_fun/src/frost.rs)
+## unfishished and not ready for use
 
-![image](https://user-images.githubusercontent.com/24557779/192925900-3c15cddf-a467-47be-80a5-3b04b0acbd47.png)
+[roast paper](https://eprint.iacr.org/2022/550.pdf)
 
 
 ## todo
+Later will be made agnostic to the threshold signature scheme that is used / frost implementation that is used.
+
 Finish roastlib and test without specifying any io methods from client to server
 
 Create communication endpoints for both ROAST server (coordinator) and signer clients using new layout, then use them to communicate a test session.
 * Current plan is to communicate via http requests and rocket with some mutable state for client and server.
-Make agnostic to the threshold signature scheme that is used
+
+```
+let frost = secp_frost::Frost::<Sha256, Deterministic<Sha256>>::default();
+let (secret_shares, frost_keys) = frost::frost_keygen(2, 3);
+
+let message = Message::plain("test", b"test");
+let roast = coordinator::Coordinator::new(frost.clone(), frost_keys[0].clone(), message);
+
+// Create each signer session and create an initial nonce
+let (mut signer1, nonce1) = signer::RoastSigner::new(
+    frost.clone(),
+    frost_keys[0].clone(),
+    0,
+    secret_shares[0].clone(),
+    [].as_slice(),
+    message,
+);
+let (mut signer2, nonce2) = signer::RoastSigner::new(
+    frost,
+    frost_keys[1].clone(),
+    1,
+    secret_shares[1].clone(),
+    [1].as_slice(),
+    message,
+);
+
+// Begin with each signer sending a nonce to ROAST
+let (combined_signature, nonce_set) = roast.process(0, None, nonce1);
+assert!(nonce_set.is_none());
+assert!(combined_signature.is_none());
+
+let (_combined_signature, nonce_set) = roast.process(1, None, nonce2);
+assert!(nonce_set.is_some());
+
+// Once ROAST receives the threshold number of nonces, it responds with a nonce set
+let sign_session_nonces = nonce_set.expect("roast responded with nonces");
+
+// The signer signs using this the nonces for this sign session,
+// and responds to ROAST with a signature share.
+let (sig_share2, nonce2) = signer2.sign(sign_session_nonces.clone());
+let (combined_signature, nonce_set) = roast.process(1, Some(sig_share2), nonce2);
+dbg!(&combined_signature.is_some(), &nonce_set.is_some());
+assert!(combined_signature.is_none());
+
+// ROAST also sends the nonce set to the other signer, who also signs
+let (sig_share1, nonce1) = signer1.sign(sign_session_nonces);
+
+let (combined_signature, nonce_set) = roast.process(0, Some(sig_share1), nonce1);
+dbg!(&combined_signature.is_some(), &nonce_set.is_some());
+assert!(combined_signature.is_some());
+
+// Once the threshold number of signature shares have been received,
+// ROAST combines the signature shares into the aggregate signature
+dbg!(combined_signature);
+```
 
 ## ROAST Paper Notes
-[paper](https://eprint.iacr.org/2022/550.pdf)
+[roast paper](https://eprint.iacr.org/2022/550.pdf)
 
 Roast is a simple wrapper that turns a given threshold signature scheme into a scheme with a robust and asynchronous signing protocol, as long as the underlying signing protocol is semi-interactive (i.e. has one preprocessing round and one actual signing round), proviceds identifiable aborts, and is unforgable under concurrent signing sessions.
 
@@ -70,3 +126,5 @@ A simple method to eliminate the need for semi-strusted coordinator is to let th
 
 The concurrent runs of ROAST do not need to be started simultaneously - e.g. honest signers can resend their reply in the run with coorinator_2 only after d seconds and only if they have not obtained a valid signature from any other run (is that a concern?)
 
+
+![image](https://user-images.githubusercontent.com/24557779/192925900-3c15cddf-a467-47be-80a5-3b04b0acbd47.png)
