@@ -11,8 +11,7 @@ use secp256kfun::{
 
 use schnorr_fun::{
     frost::{Frost, XOnlyFrostKey},
-    musig::{Nonce, NonceKeyPair},
-    nonce::NonceGen,
+    musig::Nonce,
     Message, Signature,
 };
 use sha2::Digest;
@@ -29,11 +28,12 @@ pub struct RoastState<'a> {
     malicious_signers: HashSet<usize>,
     latest_nonces: HashMap<usize, Nonce>,
     sessions: HashMap<usize, Arc<Mutex<RoastSignSession>>>,
+    signer_session_map: HashMap<usize, usize>,
     session_counter: usize,
 }
 
 pub struct RoastSignSession {
-    signers: HashSet<usize>,
+    pub signers: HashSet<usize>,
     nonces: Vec<(usize, Nonce)>,
     sig_shares: Vec<Scalar<Public, Zero>>,
 }
@@ -53,6 +53,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                 malicious_signers: HashSet::new(),
                 latest_nonces: HashMap::new(),
                 sessions: HashMap::new(),
+                signer_session_map: HashMap::new(),
                 session_counter: 0,
             })),
         };
@@ -67,7 +68,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
     }
 
     // Main body of the ROAST coordinator algorithm
-    pub fn receive_signature(
+    pub fn process(
         &self,
         index: usize,
         signature_share: Option<Scalar<Public, Zero>>,
@@ -90,61 +91,71 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
         }
 
         // If this is not the inital message from S_i
-        if roast_state.sessions.contains_key(&index) {
-            let mut roast_session = roast_state
-                .sessions
-                .get(&index)
-                .unwrap()
-                .lock()
-                .expect("got lock");
+        match roast_state.signer_session_map.get(&index) {
+            Some(session_id) => {
+                let mut roast_session = roast_state
+                    .sessions
+                    .get(&session_id)
+                    .unwrap()
+                    .lock()
+                    .expect("got lock");
 
-            let session = self.frost.start_sign_session(
-                &self.frost_key.clone(),
-                roast_session.nonces.clone(),
-                roast_state.message,
-            );
+                let session = self.frost.start_sign_session(
+                    &self.frost_key.clone(),
+                    roast_session.nonces.clone(),
+                    roast_state.message,
+                );
 
-            if !self.frost.verify_signature_share(
-                &self.frost_key.clone(),
-                &session,
-                index,
-                signature_share.expect("party provided None signature share"),
-            ) {
-                println!("Invalid signature, marking {} malicious.", index);
-                self.mark_malicious(&index);
-                return (None, None);
-            }
+                // dbg!(&self.frost_key.clone(), &session, index, signature_share);
 
-            // Store valid signature
-            roast_session
-                .sig_shares
-                .push(signature_share.expect("party provided None signature share"));
-            println!("New signature from party {}", index);
-
-            // if we have t-of-n, combine!
-            if roast_session.sig_shares.len() >= self.frost_key.clone().threshold() {
-                println!("We have the threshold number of signatures, combining!");
-                let combined_sig = self.frost.combine_signature_shares(
+                if !self.frost.verify_signature_share(
                     &self.frost_key.clone(),
                     &session,
-                    roast_session.sig_shares.clone(),
-                );
-                // return combined signature
-                return (Some(combined_sig), None);
+                    index,
+                    signature_share.expect("party provided None signature share"),
+                ) {
+                    println!("Invalid signature, marking {} malicious.", index);
+                    self.mark_malicious(&index);
+                    return (None, None);
+                }
+
+                // Store valid signature
+                roast_session
+                    .sig_shares
+                    .push(signature_share.expect("party provided None signature share"));
+                println!("New signature from party {}", index);
+
+                // if we have t-of-n, combine!
+
+                if roast_session.sig_shares.len() >= self.frost_key.clone().threshold() {
+                    println!("We have the threshold number of signatures, combining!");
+                    dbg!(&roast_session.sig_shares);
+                    let combined_sig = self.frost.combine_signature_shares(
+                        &self.frost_key.clone(),
+                        &session,
+                        roast_session.sig_shares.clone(),
+                    );
+                    // return combined signature
+                    return (Some(combined_sig), None);
+                }
             }
+            None => {}
         }
 
         // Store the recieved presignature shares
         roast_state.latest_nonces.insert(index, new_nonce);
 
         // Mark S_i as responsive
+        println!("Marked {} as responsive", index.clone());
         roast_state.responsive_signers.insert(index);
 
         // if we now have t responsive signers:
         if roast_state.responsive_signers.len() >= self.frost_key.clone().threshold() {
             println!("We now have threshold number of responsive signers!");
+            dbg!(&roast_state.responsive_signers);
             roast_state.session_counter += 1;
-            // build the presignature (aggregate the nonces).
+
+            // Look up the nonces
             let r_signers = roast_state.responsive_signers.clone();
             // we're not actually aggregating any nonces in this core yet since this will
             // require changes to frost.rs
@@ -162,27 +173,33 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                 })
                 .collect();
 
+            let sid = roast_state.session_counter.clone();
             for i in r_signers.clone() {
+                // Remember the session of this signer
+                roast_state.signer_session_map.insert(i, sid);
+
                 // send agg nonce to signers (rho, R)
-                roast_state.sessions.insert(
-                    i,
-                    Arc::new(Mutex::new(RoastSignSession {
-                        signers: r_signers.clone(),
-                        nonces: nonces.clone(),
-                        sig_shares: vec![],
-                    })),
-                );
-                let nonces = roast_state
+                let _nonces: Vec<_> = roast_state
                     .latest_nonces
                     .iter()
                     .map(|(i, nonce)| (*i, *nonce))
                     .collect();
-                println!("Responding with nonces:");
                 // DO THIS FOR EVERY S_i...>!>!> need async
-
                 // OPEN MANY THREADS AND THEN AWAIT COLLECTION
-                return (None, Some(nonces));
             }
+
+            // Clear responsive signers (otherwise we ban everyone and hang)
+            roast_state.responsive_signers = HashSet::new();
+            roast_state.sessions.insert(
+                sid,
+                Arc::new(Mutex::new(RoastSignSession {
+                    signers: r_signers,
+                    nonces: nonces.clone(),
+                    sig_shares: vec![],
+                })),
+            );
+
+            return (None, Some(nonces));
         }
 
         // (None, Some(roast_state.latest_nonces))

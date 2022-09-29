@@ -93,3 +93,40 @@ pub async fn main() -> () {
 //     [0].as_slice(),
 //     message,
 // );
+
+
+
+// OLD HTTP TRASH
+//
+//
+// HTTP call roast_server receive
+// let (combined_sig, nonce_set) =
+// let request_url = roast_server.clone()
+//     + "/init?"
+//     + &serde_json::to_string(&frost_key).expect("valid serialization");
+// let response = reqwest::get(&request_url).await.expect("valid request");
+// dbg!(response);
+
+// roast_server
+//     .receive_signature(my_index, None, initial_nonce.public)
+//     .await;
+
+// match combined_sig {
+//     Some(_) => {
+//         println!("got combined sig!");
+//     }
+//     None => {
+//         // println!("Sent partial signature {} to roast..", i)
+//     }
+// };
+// match nonce_set {
+//     Some(nonces) => {
+//         println!("Got nonces {:?}", nonces);
+//     }
+//     None => println!("No new nonces!?"),
+// };
+
+// let mut my_nonces = HashMap::new();
+// my_nonces.insert(0 as usize, initial_nonce);
+
+// pub async fn sign

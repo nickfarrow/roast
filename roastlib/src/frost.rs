@@ -1,8 +1,3 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
-};
-
 use secp256kfun::{rand_core::RngCore, Scalar};
 
 use schnorr_fun::{
@@ -58,7 +53,7 @@ pub fn frost_keygen(threshold: usize, n_parties: usize) -> (Vec<Scalar>, Vec<XOn
         }
     }
 
-    println!("{:?}", recieved_shares);
+    // println!("{:?}", recieved_shares);
 
     // finish keygen for each party
     let (secret_shares, frost_keys): (Vec<Scalar>, Vec<XOnlyFrostKey>) = (0..n_parties)
@@ -73,12 +68,12 @@ pub fn frost_keygen(threshold: usize, n_parties: usize) -> (Vec<Scalar>, Vec<XOn
                     proofs_of_possession.clone(),
                 )
                 .expect("collected shares");
-            println!("got secret share");
+            println!("Calculated secret share.");
             let xonly_frost_key = frost_key.into_xonly_key();
             (secret_share, xonly_frost_key)
         })
         .unzip();
-    println!("Finished keygen!");
+    println!("Finished keygen!\n\n");
 
     (secret_shares, frost_keys)
 }
