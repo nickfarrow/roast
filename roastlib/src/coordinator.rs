@@ -1,3 +1,4 @@
+//! ROAST coordinator
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
@@ -26,10 +27,10 @@ pub struct RoastState<'a> {
     message: Message<'a, Public>,
     responsive_signers: HashSet<usize>,
     malicious_signers: HashSet<usize>,
+    session_counter: usize,
     latest_nonces: HashMap<usize, Nonce>,
     sessions: HashMap<usize, Arc<Mutex<RoastSignSession>>>,
     signer_session_map: HashMap<usize, usize>,
-    session_counter: usize,
 }
 
 pub struct RoastSignSession {
@@ -67,7 +68,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
     // }
 
     // Main body of the ROAST coordinator algorithm
-    pub fn process(
+    pub fn receive(
         &self,
         index: usize,
         signature_share: Option<Scalar<Public, Zero>>,
@@ -98,6 +99,10 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
         // If this is not the inital message from S_i
         match roast_state.signer_session_map.get(&index) {
             Some(session_id) => {
+                println!(
+                    "Party {} sent a signature for sign session {}",
+                    index, session_id
+                );
                 // Get session from roast_state
                 let session = {
                     let roast_session = roast_state
@@ -113,9 +118,6 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                         roast_state.message,
                     )
                 };
-                println!("Party {} is loading signing session {}", index, session_id);
-
-                // dbg!(&self.frost_key.clone(), &session, index, signature_share);
 
                 if !self.frost.verify_signature_share(
                     &self.frost_key.clone(),

@@ -3,7 +3,6 @@
 
 [roast paper](https://eprint.iacr.org/2022/550.pdf)
 
-
 ## todo
 Later will be made agnostic to the threshold signature scheme that is used / frost implementation that is used.
 
@@ -12,6 +11,7 @@ Finish roastlib and test without specifying any io methods from client to server
 Create communication endpoints for both ROAST server (coordinator) and signer clients using new layout, then use them to communicate a test session.
 * Current plan is to communicate via http requests and rocket with some mutable state for client and server.
 
+## excerpt
 ```
 let frost = secp_frost::Frost::<Sha256, Deterministic<Sha256>>::default();
 let (secret_shares, frost_keys) = frost::frost_keygen(2, 3);
@@ -96,6 +96,16 @@ Unforgability: a threshold signature scheme is existentially unforgable under CM
 
 can produce a valid signature on a message that was never used in a signing session and A never asked in any query round.
 
+
+#### Nonce aggregation
+A semi-interactive threshold signature scheme is aggregatable if |p| and |sigma| are constant in parameters n and t, for p <- PreAgg(PK, {t_i}_i_in_T), sigma <- SignAgg(PK, p, {sigma_i}_i_in_T) and all inputs PK and m.
+
+The aggregation of these elements is important for practical purposes as it reduces the size of the final signature as well as the amount of data that needs to be breadcast during signing.
+
+In each of the signing rounds, a coordinator node will be one of the ssigners and can collect the contributions from all signers, aggregate them, and broadcast only the aggregate output back to signers.
+
+> Doesn't seem super important
+
 FROST3 -> PreAgg (nonce agg) -> Aggregate two presignature products D=prod(d_i), and E=prod(e_i) for i in T. Whereas FROST2 the aggregated presignature is not really aggregated, just the set {(D_i, E_i) for i in T}. The SignRound algorightm takes care of computing the products, as before. Other FROST versions include 2-BTZ and 2-CKM.
 
 ### FROSTLAND
@@ -124,7 +134,7 @@ Along with each signature share, each signer is also required to provide a fresh
 ### Eliminating the Trusted Coordinator
 A simple method to eliminate the need for semi-strusted coordinator is to let the signers run enough instances of the coordinator process: the n signers choose among themselves any set n-t+1 coordinators and start s-t+1 concurrent runs of roast. Note that one of these sessions will have t honest signers.
 
-The concurrent runs of ROAST do not need to be started simultaneously - e.g. honest signers can resend their reply in the run with coorinator_2 only after d seconds and only if they have not obtained a valid signature from any other run (is that a concern?)
+The concurrent runs of ROAST do not need to be started simultaneously - e.g. honest signers can resend their reply in the run with coorinator_2 only after d seconds and only if they have not obtained a valid signature from any other run (is that a concern? Yes excessive computation and communication.)
 
 
 ![image](https://user-images.githubusercontent.com/24557779/192925900-3c15cddf-a467-47be-80a5-3b04b0acbd47.png)
