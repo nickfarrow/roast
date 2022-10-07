@@ -22,7 +22,6 @@ pub struct Coordinator<'a, H, NG> {
     pub frost_key: XOnlyFrostKey,
     state: Arc<Mutex<RoastState<'a>>>,
 }
-
 pub struct RoastState<'a> {
     message: Message<'a, Public>,
     responsive_signers: HashSet<usize>,
@@ -37,6 +36,13 @@ pub struct RoastSignSession {
     pub signers: HashSet<usize>,
     nonces: Vec<(usize, Nonce)>,
     sig_shares: Vec<Scalar<Public, Zero>>,
+}
+
+#[derive(Debug)]
+pub struct RoastResponse {
+    pub recipients: Vec<usize>,
+    pub combined_signature: Option<Signature>,
+    pub nonce_set: Option<Vec<(usize, Nonce)>>,
 }
 
 impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG> {
@@ -73,12 +79,16 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
         index: usize,
         signature_share: Option<Scalar<Public, Zero>>,
         new_nonce: Nonce,
-    ) -> (Option<Signature>, Option<Vec<(usize, Nonce)>>) {
+    ) -> RoastResponse {
         let mut roast_state = self.state.lock().expect("got lock");
 
         if roast_state.malicious_signers.contains(&index) {
             println!("Malicious signer tried to send signature! {}", index);
-            return (None, None);
+            return RoastResponse {
+                recipients: vec![index],
+                combined_signature: None,
+                nonce_set: None,
+            };
         }
 
         if roast_state.responsive_signers.contains(&index) {
@@ -93,7 +103,11 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                 panic!("not enough singers left to continue!");
             }
 
-            return (None, None);
+            return RoastResponse {
+                recipients: vec![index],
+                combined_signature: None,
+                nonce_set: None,
+            };
         }
 
         // If this is not the inital message from S_i
@@ -131,7 +145,11 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                         panic!("not enough singers left to continue!");
                     }
 
-                    return (None, None);
+                    return RoastResponse {
+                        recipients: vec![index],
+                        combined_signature: None,
+                        nonce_set: None,
+                    };
                 }
 
                 // Reopen session within the roast state for writting
@@ -159,7 +177,11 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                         roast_session.sig_shares.clone(),
                     );
                     // return combined signature
-                    return (Some(combined_sig), None);
+                    return RoastResponse {
+                        recipients: (0..self.frost_key.n_signers()).collect(),
+                        combined_signature: Some(combined_sig),
+                        nonce_set: None,
+                    };
                 }
             }
             None => {}
@@ -197,35 +219,30 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                 .collect();
 
             let sid = roast_state.session_counter.clone();
-            for i in r_signers.clone() {
-                // Remember the session of this signer
-                roast_state.signer_session_map.insert(i, sid);
-
-                // send agg nonce to signers (rho, R)
-                let _nonces: Vec<_> = roast_state
-                    .latest_nonces
-                    .iter()
-                    .map(|(i, nonce)| (*i, *nonce))
-                    .collect();
-                // DO THIS FOR EVERY S_i...>!>!> need async
-                // OPEN MANY THREADS AND THEN AWAIT COLLECTION
-            }
-
             // Clear responsive signers (otherwise we ban everyone and hang)
             roast_state.responsive_signers = HashSet::new();
             roast_state.sessions.insert(
                 sid,
                 Arc::new(Mutex::new(RoastSignSession {
-                    signers: r_signers,
+                    signers: r_signers.clone(),
                     nonces: nonces.clone(),
                     sig_shares: vec![],
                 })),
             );
 
-            return (None, Some(nonces));
+            // Send nonces to each signer S_i
+            return RoastResponse {
+                recipients: r_signers.into_iter().collect(),
+                combined_signature: None,
+                nonce_set: Some(nonces),
+            };
         }
 
         // (None, Some(roast_state.latest_nonces))
-        (None, None)
+        return RoastResponse {
+            recipients: vec![index],
+            combined_signature: None,
+            nonce_set: None,
+        };
     }
 }
