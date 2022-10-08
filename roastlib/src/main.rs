@@ -50,8 +50,8 @@ mod test {
         let response2 = roast.receive(1, None, nonce2);
         assert!(response2.nonce_set.is_some());
 
-        // Once ROAST receives the threshold number of nonces, it responds with a nonce set
-        // to the group of responsive signers
+        // Once ROAST receives the threshold number of nonces, it responds to the group of
+        // responsive signers with a nonce set to the group of responsive signers.
         assert!(response2.recipients.contains(&0) && response2.recipients.contains(&1));
         let sign_session_nonces = response2.nonce_set.expect("roast responded with nonces");
 

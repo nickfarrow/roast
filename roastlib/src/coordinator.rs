@@ -22,6 +22,8 @@ pub struct Coordinator<'a, H, NG> {
     pub frost_key: XOnlyFrostKey,
     state: Arc<Mutex<RoastState<'a>>>,
 }
+
+#[derive(Debug)]
 pub struct RoastState<'a> {
     message: Message<'a, Public>,
     responsive_signers: HashSet<usize>,
@@ -32,6 +34,7 @@ pub struct RoastState<'a> {
     signer_session_map: HashMap<usize, usize>,
 }
 
+#[derive(Debug)]
 pub struct RoastSignSession {
     pub signers: HashSet<usize>,
     nonces: Vec<(usize, Nonce)>,
@@ -81,6 +84,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
         new_nonce: Nonce,
     ) -> RoastResponse {
         let mut roast_state = self.state.lock().expect("got lock");
+        // dbg!(&roast_state);
 
         if roast_state.malicious_signers.contains(&index) {
             println!("Malicious signer tried to send signature! {}", index);
@@ -137,7 +141,9 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                     &self.frost_key.clone(),
                     &session,
                     index,
-                    signature_share.expect("party unexpectedly provided None signature share"),
+                    signature_share.expect(
+                        "party unexpectedly provided None signature share for a sign session",
+                    ),
                 ) {
                     println!("Invalid signature, marking {} malicious.", index);
                     roast_state.malicious_signers.insert(index);
@@ -167,7 +173,6 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                 println!("New signature from party {}", index);
 
                 // if we have t-of-n, combine!
-
                 if roast_session.sig_shares.len() >= self.frost_key.clone().threshold() {
                     println!("We have the threshold number of signatures, combining!");
                     dbg!(&roast_session.sig_shares);
@@ -229,6 +234,11 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                     sig_shares: vec![],
                 })),
             );
+
+            // Remember the session for signers S_i
+            for i in &r_signers {
+                roast_state.signer_session_map.insert(*i, sid);
+            }
 
             // Send nonces to each signer S_i
             return RoastResponse {
