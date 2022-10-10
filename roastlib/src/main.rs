@@ -43,33 +43,41 @@ mod test {
         );
 
         // Begin with each signer sending a nonce to ROAST, marking these signers as responsive.
-        let (combined_signature, nonce_set) = roast.receive(0, None, nonce1);
-        assert!(nonce_set.is_none());
-        assert!(combined_signature.is_none());
+        let response = roast.receive(0, None, nonce1);
+        assert!(response.nonce_set.is_none());
+        assert!(response.combined_signature.is_none());
 
-        let (_combined_signature, nonce_set) = roast.receive(1, None, nonce2);
-        assert!(nonce_set.is_some());
+        let response2 = roast.receive(1, None, nonce2);
+        assert!(response2.nonce_set.is_some());
 
-        // Once ROAST receives the threshold number of nonces, it responds with a nonce set
-        let sign_session_nonces = nonce_set.expect("roast responded with nonces");
+        // Once ROAST receives the threshold number of nonces, it responds to the group of
+        // responsive signers with a nonce set to the group of responsive signers.
+        assert!(response2.recipients.contains(&0) && response2.recipients.contains(&1));
+        let sign_session_nonces = response2.nonce_set.expect("roast responded with nonces");
 
         // The signer signs using this the nonces for this sign session,
         // and responds to ROAST with a signature share.
         let (sig_share2, nonce2) = signer2.sign(sign_session_nonces.clone());
-        let (combined_signature, nonce_set) = roast.receive(1, Some(sig_share2), nonce2);
-        dbg!(&combined_signature.is_some(), &nonce_set.is_some());
-        assert!(combined_signature.is_none());
+        let response = roast.receive(1, Some(sig_share2), nonce2);
+        dbg!(
+            &response.combined_signature.is_some(),
+            &response.nonce_set.is_some()
+        );
+        assert!(response.combined_signature.is_none());
 
         // ROAST also sends the nonce set to the other signer, who also signs
         let (sig_share1, nonce1) = signer1.sign(sign_session_nonces);
 
-        let (combined_signature, nonce_set) = roast.receive(0, Some(sig_share1), nonce1);
-        dbg!(&combined_signature.is_some(), &nonce_set.is_some());
-        assert!(combined_signature.is_some());
+        let response = roast.receive(0, Some(sig_share1), nonce1);
+        dbg!(
+            &response.combined_signature.is_some(),
+            &response.nonce_set.is_some()
+        );
+        assert!(response.combined_signature.is_some());
 
         // Once the threshold number of signature shares have been received,
         // ROAST combines the signature shares into the aggregate signature
-        dbg!(combined_signature);
+        dbg!(response.combined_signature);
     }
 
     // This test works, but slowly since it goes through a few sets of responsive signers
@@ -109,7 +117,7 @@ mod test {
             for signer_index in 0..n_parties {
                 // Check to see if this signer has recieved any nonces
                 let (sig, new_nonce) = match nonce_set[signer_index].clone() {
-                    // Sign if we have recieved nonces, and create new nonce
+                    // If we have nonces, sign and send sig and a new nonce
                     Some(signing_nonces) => {
                         // dbg!(&signing_nonces);
                         let (sig, nonce) = signers[signer_index].sign(signing_nonces);
@@ -124,32 +132,17 @@ mod test {
                     ),
                 };
                 // Send signature and our next nonce to ROAST
-                let (combined_sig, updated_nonce_set) = roast.receive(signer_index, sig, new_nonce);
+                let response = roast.receive(signer_index, sig, new_nonce);
+                nonces[signer_index] = new_nonce;
 
-                if combined_sig.is_some() {
-                    finished_signature = combined_sig;
+                if response.combined_signature.is_some() {
+                    finished_signature = response.combined_signature;
                     break;
                 }
 
-                // hacky mimic broadcast
-                // Store the new nonce_set for this caller,
-                // and for peers who are have not recieved any nonces yet.
-                // this will probably break when introducing malicious signers
-                if updated_nonce_set.is_some() {
-                    nonce_set[signer_index] = updated_nonce_set.clone();
-                    nonce_set = nonce_set
-                        .into_iter()
-                        .map(|nonce| {
-                            if nonce.is_some() {
-                                nonce
-                            } else {
-                                updated_nonce_set.clone()
-                            }
-                        })
-                        .collect()
+                for index in response.recipients {
+                    nonce_set[index] = response.nonce_set.clone();
                 }
-
-                nonces[signer_index] = new_nonce;
 
                 if sig.is_some() {
                     sig_shares.push(sig);
