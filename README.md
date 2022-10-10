@@ -1,6 +1,11 @@
 # roast for secp256kfun [frost](https://github.com/LLFourn/secp256kfun/blob/master/schnorr_fun/src/frost.rs)
 ## unfishished and not ready for use
 
+
+Click [here to get an idea for how this roast wrapper can be used](https://github.com/nickfarrow/roast/blob/master/roastlib/src/main.rs)
+
+`endpoints/` is not currently being developed, just the core `roastlib/`.
+
 [roast paper](https://eprint.iacr.org/2022/550.pdf)
 
 ## todo
