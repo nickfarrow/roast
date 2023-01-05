@@ -1,28 +1,24 @@
-use secp256kfun::Scalar;
+use schnorr_fun::frost::FrostKey;
+use secp256kfun::{Scalar, marker::EvenY};
 
 use schnorr_fun::{
-    frost::{Frost, ScalarPoly, XOnlyFrostKey},
+    frost,
     nonce::Deterministic,
 };
 
 use schnorr_fun::Schnorr;
 use sha2::Sha256;
 
-pub fn frost_keygen(threshold: usize, n_parties: usize) -> (Vec<Scalar>, Vec<XOnlyFrostKey>) {
-    let frost = Frost::new(Schnorr::<Sha256, Deterministic<Sha256>>::new(
+pub fn frost_keygen(threshold: usize, n_parties: usize) -> (Vec<Scalar>, Vec<FrostKey<EvenY>>) {
+    let frost = frost::Frost::new(Schnorr::<Sha256, Deterministic<Sha256>>::new(
         Deterministic::<Sha256>::default(),
     ));
     assert!(threshold <= n_parties);
 
     // create some scalar polynomial for each party
     let mut rng = rand::rngs::ThreadRng::default();
-    let scalar_polys = (0..n_parties)
-        .map(|_| ScalarPoly::random(threshold, &mut rng))
-        .collect::<Vec<_>>();
-    let point_polys = scalar_polys
-        .iter()
-        .map(ScalarPoly::to_point_poly)
-        .collect::<Vec<_>>();
+    let scalar_polys: Vec<_> = (0..n_parties).map(|_| frost::generate_scalar_poly(threshold, &mut rng)).collect();
+    let point_polys = scalar_polys.iter().map(|sp| frost::to_point_poly(&sp)).collect();
     let keygen = frost.new_keygen(point_polys).unwrap();
     let (shares, proofs_of_possesion): (Vec<_>, Vec<_>) = scalar_polys
         .into_iter()

@@ -1,11 +1,12 @@
+use rand::{RngCore};
 use secp256kfun::{
     digest::typenum::U32,
-    marker::{Public, Zero},
+    marker::{Public, Zero, EvenY},
     Scalar,
 };
 
 use schnorr_fun::{
-    frost::{Frost, XOnlyFrostKey},
+    frost::{Frost, FrostKey},
     musig::{Nonce, NonceKeyPair},
     nonce::NonceGen,
     Message,
@@ -14,7 +15,7 @@ use sha2::Digest;
 
 pub struct RoastSigner<'a, H, NG> {
     frost: Frost<H, NG>,
-    frost_key: XOnlyFrostKey,
+    frost_key: FrostKey<EvenY>,
     my_index: usize,
     secret_share: Scalar,
     message: Message<'a, Public>,
@@ -23,19 +24,14 @@ pub struct RoastSigner<'a, H, NG> {
 
 impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastSigner<'a, H, NG> {
     pub fn new(
+        nonce_rng: &mut impl RngCore,
         frost: Frost<H, NG>,
-        frost_key: XOnlyFrostKey,
+        frost_key: FrostKey<EvenY>,
         my_index: usize,
         secret_share: Scalar,
-        initial_nonce_sid: &[u8],
         message: Message<'a>,
     ) -> (RoastSigner<'a, H, NG>, Nonce) {
-        let initial_nonce = frost.gen_nonce(
-            &secret_share,
-            &initial_nonce_sid,
-            Some(frost_key.public_key().normalize()),
-            Some(message),
-        );
+        let initial_nonce = frost.gen_nonce(nonce_rng);
         let my_nonces = vec![initial_nonce.clone()];
 
         (
@@ -51,17 +47,17 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastSigner
         )
     }
 
-    pub fn new_nonce(&self, sid: &[u8]) -> NonceKeyPair {
+    pub fn new_nonce(&mut self,
+        nonce_rng: &mut impl RngCore,
+    ) -> NonceKeyPair {
         let nonce = self.frost.gen_nonce(
-            &self.secret_share,
-            sid,
-            Some(self.frost_key.public_key().normalize()),
-            Some(self.message),
+            nonce_rng
         );
+        self.my_nonces.push(nonce.clone());
         nonce
     }
 
-    pub fn sign(&mut self, nonce_set: Vec<(usize, Nonce)>) -> (Scalar<Public, Zero>, Nonce) {
+    pub fn sign(&mut self, nonce_rng: &mut impl RngCore, nonce_set: Vec<(usize, Nonce)>) -> (Scalar<Public, Zero>, Nonce) {
         let session = self.frost.start_sign_session(
             &self.frost_key,
             nonce_set,
@@ -79,8 +75,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastSigner
             my_nonce,
         );
         // call server with (sig, self.new_nonce())
-        self.my_nonces.push(self.new_nonce(&[0]));
-
-        (sig, self.my_nonces.last().expect("some nonce").public())
+        let nonce = self.new_nonce(nonce_rng);
+        (sig, nonce.public())
     }
 }

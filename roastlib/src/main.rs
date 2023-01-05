@@ -23,22 +23,24 @@ mod test {
 
         let message = Message::plain("test", b"test");
         let roast = coordinator::Coordinator::new(frost.clone(), frost_keys[0].clone(), message);
+        let mut rng1 = rand::thread_rng();
+        let mut rng2 = rand::thread_rng();
 
         // Create each signer session and create an initial nonce
         let (mut signer1, nonce1) = signer::RoastSigner::new(
+            &mut rng1,
             frost.clone(),
             frost_keys[0].clone(),
             0,
             secret_shares[0].clone(),
-            [].as_slice(),
             message,
         );
         let (mut signer2, nonce2) = signer::RoastSigner::new(
+            &mut rng2,
             frost,
             frost_keys[1].clone(),
             1,
             secret_shares[1].clone(),
-            [1].as_slice(),
             message,
         );
 
@@ -57,7 +59,7 @@ mod test {
 
         // The signer signs using this the nonces for this sign session,
         // and responds to ROAST with a signature share.
-        let (sig_share2, nonce2) = signer2.sign(sign_session_nonces.clone());
+        let (sig_share2, nonce2) = signer2.sign(&mut rng2, sign_session_nonces.clone());
         let response = roast.receive(1, Some(sig_share2), nonce2);
         dbg!(
             &response.combined_signature.is_some(),
@@ -66,7 +68,7 @@ mod test {
         assert!(response.combined_signature.is_none());
 
         // ROAST also sends the nonce set to the other signer, who also signs
-        let (sig_share1, nonce1) = signer1.sign(sign_session_nonces);
+        let (sig_share1, nonce1) = signer1.sign(&mut rng1, sign_session_nonces);
 
         let response = roast.receive(0, Some(sig_share1), nonce1);
         dbg!(
@@ -90,6 +92,7 @@ mod test {
         let message = Message::plain("test", b"test");
         let roast = coordinator::Coordinator::new(frost.clone(), frost_keys[0].clone(), message);
 
+        let mut rng = rand::thread_rng();
         // Create each signer session and create an initial nonce
         let (mut signers, mut nonces): (Vec<_>, Vec<_>) = frost_keys
             .into_iter()
@@ -97,11 +100,11 @@ mod test {
             .enumerate()
             .map(|(i, (frost_key, secret_share))| {
                 signer::RoastSigner::new(
+                    &mut rng,
                     frost.clone(),
                     frost_key,
                     i,
                     secret_share,
-                    [i as u8].as_slice(),
                     message,
                 )
             })
@@ -119,15 +122,14 @@ mod test {
                 let (sig, new_nonce) = match nonce_set[signer_index].clone() {
                     // If we have nonces, sign and send sig and a new nonce
                     Some(signing_nonces) => {
-                        // dbg!(&signing_nonces);
-                        let (sig, nonce) = signers[signer_index].sign(signing_nonces);
+                        let (sig, nonce) = signers[signer_index].sign(&mut rng, signing_nonces);
                         (Some(sig), nonce)
                     }
                     // Otherwise, just create a new nonce
                     None => (
                         None,
                         signers[signer_index]
-                            .new_nonce([signer_index as u8].as_slice())
+                            .new_nonce(&mut rng)
                             .public(),
                     ),
                 };

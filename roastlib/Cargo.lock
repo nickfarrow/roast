@@ -1332,10 +1332,11 @@ checksum = "4501abdff3ae82a1c1b477a17252eb69cee9e66eb915c1abaa4f44d873df9f09"
 
 [[package]]
 name = "schnorr_fun"
-version = "0.7.1"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f67cd582f00b2bd6d6d4189535f5c2edca0c1f3156462568f9bd6b2cd5331a1d"
 dependencies = [
  "secp256kfun",
- "serde",
 ]
 
 [[package]]
@@ -1351,12 +1352,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 
 [[package]]
+name = "secp256k1"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "550fc3b723a478be77bf74718947cdcdd75144d508aaa70f0a320036905df2a8"
+dependencies = [
+ "secp256k1-sys",
+ "serde",
+]
+
+[[package]]
+name = "secp256k1-sys"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8058e28ae464daf5ac14c5c0f78110b58616e796c4e4e28cfcca38fdb13d8f22"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "secp256kfun"
-version = "0.7.1"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec07e2d7ba56688989da0c032dd6b16fe2395dbbdab4f919e7ae009ccf8200bd"
 dependencies = [
  "digest",
  "proptest",
  "rand_core 0.6.4",
+ "secp256k1",
  "serde",
  "subtle-ng",
 ]

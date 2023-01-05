@@ -6,12 +6,12 @@ use std::{
 
 use secp256kfun::{
     digest::typenum::U32,
-    marker::{Public, Zero},
+    marker::{Public, Zero, EvenY},
     Scalar,
 };
 
 use schnorr_fun::{
-    frost::{Frost, XOnlyFrostKey},
+    frost::{Frost, FrostKey},
     musig::Nonce,
     Message, Signature,
 };
@@ -19,7 +19,7 @@ use sha2::Digest;
 
 pub struct Coordinator<'a, H, NG> {
     pub frost: Frost<H, NG>,
-    pub frost_key: XOnlyFrostKey,
+    pub frost_key: FrostKey<EvenY>,
     state: Arc<Mutex<RoastState<'a>>>,
 }
 
@@ -51,7 +51,7 @@ pub struct RoastResponse {
 impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG> {
     pub fn new(
         frost: Frost<H, NG>,
-        frost_key: XOnlyFrostKey,
+        frost_key: FrostKey<EvenY>,
         message: Message<'a, Public>,
     ) -> Self {
         return Self {
