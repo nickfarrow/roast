@@ -1,4 +1,13 @@
-//! ROAST coordinator
+//! ROAST Coordinator
+//! 
+//! The core algorithm for managing the state of a ROAST [`Coordinator`].
+//! 
+//! When a coordinator wants a message to be signed, each signer will first send the coordinator a nonce.
+//! Upon the coordinator receiving enough nonces, it should request those "responsive signers" to sign,
+//! and also to provide a new nonce for following signing rounds.
+//! 
+//! The ROAST coordinator keeps track of responsive and malicious signers in order to work towards a
+//! complete and valid signature.
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
@@ -17,6 +26,8 @@ use schnorr_fun::{
 };
 use sha2::Digest;
 
+// TODO: we may want to continue the roast coordinator state to the next message signing session
+// such that we keep our list of malicious or responsive signers. fn start_session() & Option<Message>?
 pub struct Coordinator<'a, H, NG> {
     pub frost: Frost<H, NG>,
     pub frost_key: FrostKey<EvenY>,
@@ -49,6 +60,7 @@ pub struct RoastResponse {
 }
 
 impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG> {
+    /// Create a new ROAST [`Coordinator`] to receive signatures and nonces from signers
     pub fn new(
         frost: Frost<H, NG>,
         frost_key: FrostKey<EvenY>,
@@ -69,14 +81,15 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
         };
     }
 
-    // pub fn mark_malicious(self, roast_state: &mut MutexGuard<RoastState>, index: &usize) {
-    //     roast_state.malicious_signers.insert(*index);
-    //     if roast_state.malicious_signers.len() >= self.frost_key.clone().threshold() {
-    //         panic!("not enough singers left to continue!");
-    //     }
-    // }
-
-    // Main body of the ROAST coordinator algorithm
+    
+    /// Receive a signature share and new nonce from a signer
+    /// 
+    /// For the first signing session, signers must first send just a nonce with None signature.
+    /// 
+    /// This function contains the core of *[ROAST paper's coordinator algorithm]* (Figure 4). 
+    /// Hopefully the comments are helpful in comparison.
+    /// 
+    /// [ROAST coordinator algorithm]: <https://eprint.iacr.org/2022/550.pdf>
     pub fn receive(
         &self,
         index: usize,

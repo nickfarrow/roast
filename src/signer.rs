@@ -1,5 +1,6 @@
 //! ROAST Signer
-
+//! 
+//! Manage a FROST key in order to send nonces and signature shares upon request from a ROAST coordinator.
 use rand::{RngCore};
 use secp256kfun::{
     digest::typenum::U32,
@@ -25,6 +26,14 @@ pub struct RoastSigner<'a, H, NG> {
 }
 
 impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastSigner<'a, H, NG> {
+    /// Create a new [`RoastSigner`] session for a particular message
+    ///
+    /// A new [`RoastSigner`] should be created for each message the group wants to sign.
+    /// The frost protocol instance's noncegen (NG) will be used to generate nonces.
+    /// This noncegen must be chosen carefully (including between sessions) to ensure
+    /// that nonces are never reused. See *[secp256kfun FROST]* for more info.
+    ///
+    /// [secp256kfun FROST]: <https://docs.rs/schnorr_fun/latest/schnorr_fun/frost/index.html>
     pub fn new(
         nonce_rng: &mut impl RngCore,
         frost: Frost<H, NG>,
@@ -49,6 +58,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastSigner
         )
     }
 
+    /// Create a new nonce using the [`Frost`]'s internal noncegen
     pub fn new_nonce(&mut self,
         nonce_rng: &mut impl RngCore,
     ) -> NonceKeyPair {
@@ -59,6 +69,9 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastSigner
         nonce
     }
 
+    /// Sign the message with a nonce set
+    /// 
+    /// Also generates a new nonce to share and use for the next signing round
     pub fn sign(&mut self, nonce_rng: &mut impl RngCore, nonce_set: Vec<(usize, Nonce)>) -> (Scalar<Public, Zero>, Nonce) {
         let session = self.frost.start_sign_session(
             &self.frost_key,

@@ -156,10 +156,12 @@ mod test {
         assert!(finished_signature.is_some())
     }
 
+
+    // TODO: proptest with varying amounts of malicious signers or unresponsive signers
     proptest! {
             #[test]
             fn roast_proptest_t_of_n(
-                (n_parties, threshold) in (2usize..5).prop_flat_map(|n| (Just(n), 2usize..=n))
+                (n_parties, threshold) in (2usize..10).prop_flat_map(|n| (Just(n), 2usize..=n))
             ) {
             t_of_n_sequential(threshold, n_parties);
         }
