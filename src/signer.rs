@@ -1,3 +1,5 @@
+//! ROAST Signer
+
 use rand::{RngCore};
 use secp256kfun::{
     digest::typenum::U32,
@@ -61,7 +63,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG: NonceGen> RoastSigner
         let session = self.frost.start_sign_session(
             &self.frost_key,
             nonce_set,
-            Message::plain("test", b"test"),
+            self.message,
         );
         let my_nonce = self
             .my_nonces

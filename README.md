@@ -2,9 +2,7 @@
 ## unfishished and not ready for use
 
 
-Click [here to get an idea for how this roast wrapper can be used](https://github.com/nickfarrow/roast/blob/master/roastlib/src/main.rs)
-
-`endpoints/` is not currently being developed, just the core `roastlib/`.
+Click [here to get an idea for how this roast wrapper can be used](https://github.com/nickfarrow/roast/blob/master/src/main.rs)
 
 [roast paper](https://eprint.iacr.org/2022/550.pdf)
 
