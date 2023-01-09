@@ -3,7 +3,7 @@ fn main() {}
 #[cfg(test)]
 mod test {
     use roast::coordinator;
-    use roast::frost;
+    use roast::test_keygen;
     use roast::signer;
     use schnorr_fun::frost as secp_frost;
     use schnorr_fun::musig::Nonce;
@@ -19,7 +19,7 @@ mod test {
     #[test]
     fn test_2_of_3_sequential() {
         let frost = secp_frost::Frost::<Sha256, Deterministic<Sha256>>::default();
-        let (secret_shares, frost_keys) = frost::frost_keygen(2, 3);
+        let (secret_shares, frost_keys) = test_keygen::frost_keygen(2, 3);
 
         let message = Message::plain("test", b"test");
         let roast = coordinator::Coordinator::new(frost.clone(), frost_keys[0].clone(), message);
@@ -87,7 +87,7 @@ mod test {
     // any asynchronous messages.
     fn t_of_n_sequential(threshold: usize, n_parties: usize) {
         let frost = secp_frost::Frost::<Sha256, Deterministic<Sha256>>::default();
-        let (secret_shares, frost_keys) = frost::frost_keygen(threshold, n_parties);
+        let (secret_shares, frost_keys) = test_keygen::frost_keygen(threshold, n_parties);
 
         let message = Message::plain("test", b"test");
         let roast = coordinator::Coordinator::new(frost.clone(), frost_keys[0].clone(), message);

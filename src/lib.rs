@@ -1,3 +1,3 @@
 pub mod coordinator;
-pub mod frost;
+pub mod test_keygen;
 pub mod signer;
