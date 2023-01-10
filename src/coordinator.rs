@@ -90,7 +90,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
     /// Hopefully the comments are helpful in comparison.
     /// 
     /// [ROAST coordinator algorithm]: <https://eprint.iacr.org/2022/550.pdf>
-    pub fn receive(
+    pub async fn receive(
         &self,
         index: usize,
         signature_share: Option<Scalar<Public, Zero>>,

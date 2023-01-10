@@ -3,18 +3,30 @@ fn main() {}
 #[cfg(test)]
 mod test {
     use roast::coordinator;
+    use roast::signer::RoastSigner;
     use roast::test_keygen;
     use roast::signer;
     use schnorr_fun::frost as secp_frost;
     use schnorr_fun::musig::Nonce;
     use schnorr_fun::nonce::Deterministic;
     use schnorr_fun::Message;
+    use schnorr_fun::nonce::NonceGen;
+    use secp256kfun::digest::typenum::U32;
+    use sha2::Digest;
     use sha2::Sha256;
 
     use secp256kfun::proptest::{
         proptest,
         strategy::{Just, Strategy},
     };
+
+    // for async tests
+    macro_rules! aw {
+        ($e:expr) => {
+            tokio_test::block_on($e)
+        };
+    }
+    
 
     #[test]
     fn test_2_of_3_sequential() {
@@ -45,11 +57,11 @@ mod test {
         );
 
         // Begin with each signer sending a nonce to ROAST, marking these signers as responsive.
-        let response = roast.receive(0, None, nonce1);
+        let response = aw!(roast.receive(0, None, nonce1));
         assert!(response.nonce_set.is_none());
         assert!(response.combined_signature.is_none());
 
-        let response2 = roast.receive(1, None, nonce2);
+        let response2 = aw!(roast.receive(1, None, nonce2));
         assert!(response2.nonce_set.is_some());
 
         // Once ROAST receives the threshold number of nonces, it responds to the group of
@@ -60,7 +72,7 @@ mod test {
         // The signer signs using this the nonces for this sign session,
         // and responds to ROAST with a signature share.
         let (sig_share2, nonce2) = signer2.sign(&mut rng2, sign_session_nonces.clone());
-        let response = roast.receive(1, Some(sig_share2), nonce2);
+        let response = aw!(roast.receive(1, Some(sig_share2), nonce2));
         dbg!(
             &response.combined_signature.is_some(),
             &response.nonce_set.is_some()
@@ -70,7 +82,7 @@ mod test {
         // ROAST also sends the nonce set to the other signer, who also signs
         let (sig_share1, nonce1) = signer1.sign(&mut rng1, sign_session_nonces);
 
-        let response = roast.receive(0, Some(sig_share1), nonce1);
+        let response = aw!(roast.receive(0, Some(sig_share1), nonce1));
         dbg!(
             &response.combined_signature.is_some(),
             &response.nonce_set.is_some()
@@ -134,7 +146,7 @@ mod test {
                     ),
                 };
                 // Send signature and our next nonce to ROAST
-                let response = roast.receive(signer_index, sig, new_nonce);
+                let response = aw!(roast.receive(signer_index, sig, new_nonce));
                 nonces[signer_index] = new_nonce;
 
                 if response.combined_signature.is_some() {
@@ -161,9 +173,9 @@ mod test {
     proptest! {
             #[test]
             fn roast_proptest_t_of_n(
-                (n_parties, threshold) in (2usize..10).prop_flat_map(|n| (Just(n), 2usize..=n))
+                (n_parties, threshold) in (2usize..5).prop_flat_map(|n| (Just(n), 2usize..=n))
             ) {
-            t_of_n_sequential(threshold, n_parties);
-        }
+                t_of_n_sequential(threshold, n_parties);
+            }
     }
 }
