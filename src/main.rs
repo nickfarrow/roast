@@ -2,6 +2,7 @@ fn main() {}
 
 #[cfg(test)]
 mod test {
+    use rand::seq::SliceRandom;
     use roast::coordinator;
     use roast::test_keygen;
     use roast::signer;
@@ -9,6 +10,9 @@ mod test {
     use schnorr_fun::musig::Nonce;
     use schnorr_fun::nonce::Deterministic;
     use schnorr_fun::Message;
+    use secp256kfun::Scalar;
+    use secp256kfun::proptest::test_runner::RngAlgorithm;
+    use secp256kfun::proptest::test_runner::TestRng;
     use sha2::Sha256;
 
     use secp256kfun::proptest::{
@@ -45,11 +49,11 @@ mod test {
         );
 
         // Begin with each signer sending a nonce to ROAST, marking these signers as responsive.
-        let response = roast.receive(0, None, nonce1);
+        let response = roast.receive(0, None, nonce1).unwrap();
         assert!(response.nonce_set.is_none());
         assert!(response.combined_signature.is_none());
 
-        let response2 = roast.receive(1, None, nonce2);
+        let response2 = roast.receive(1, None, nonce2).unwrap();
         assert!(response2.nonce_set.is_some());
 
         // Once ROAST receives the threshold number of nonces, it responds to the group of
@@ -60,7 +64,7 @@ mod test {
         // The signer signs using this the nonces for this sign session,
         // and responds to ROAST with a signature share.
         let (sig_share2, nonce2) = signer2.sign(&mut rng2, sign_session_nonces.clone());
-        let response = roast.receive(1, Some(sig_share2), nonce2);
+        let response = roast.receive(1, Some(sig_share2), nonce2).unwrap();
         dbg!(
             &response.combined_signature.is_some(),
             &response.nonce_set.is_some()
@@ -70,7 +74,7 @@ mod test {
         // ROAST also sends the nonce set to the other signer, who also signs
         let (sig_share1, nonce1) = signer1.sign(&mut rng1, sign_session_nonces);
 
-        let response = roast.receive(0, Some(sig_share1), nonce1);
+        let response = roast.receive(0, Some(sig_share1), nonce1).unwrap();
         dbg!(
             &response.combined_signature.is_some(),
             &response.nonce_set.is_some()
@@ -85,14 +89,27 @@ mod test {
     // This test works, but slowly since it goes through a few sets of responsive signers
     // before producing a complete signature. This is because we aren't accurately replicating
     // any asynchronous messages.
-    fn t_of_n_sequential(threshold: usize, n_parties: usize) {
+    fn t_of_n_sequential(threshold: usize, n_parties: usize, n_malicious: usize, rng: &mut TestRng) {
+        println!("Testing {}-of-{} with {} malicious:", threshold, n_parties, n_malicious);
         let frost = secp_frost::Frost::<Sha256, Deterministic<Sha256>>::default();
         let (secret_shares, frost_keys) = test_keygen::frost_keygen(threshold, n_parties);
 
         let message = Message::plain("test", b"test");
         let roast = coordinator::Coordinator::new(frost.clone(), frost_keys[0].clone(), message);
 
-        let mut rng = rand::thread_rng();
+        // use a boolean mask for which participants are malicious
+        let mut malicious_mask = vec![true; n_malicious];
+        malicious_mask.append(&mut vec![false; n_parties - n_malicious]);
+        // shuffle the mask for random signers
+        malicious_mask.shuffle(rng);
+
+        let malicious_indexes: Vec<_> = malicious_mask
+            .iter()
+            .enumerate()
+            .filter(|(_, is_signer)| **is_signer)
+            .map(|(i,_)| i)
+            .collect();
+
         // Create each signer session and create an initial nonce
         let (mut signers, mut nonces): (Vec<_>, Vec<_>) = frost_keys
             .into_iter()
@@ -100,7 +117,7 @@ mod test {
             .enumerate()
             .map(|(i, (frost_key, secret_share))| {
                 signer::RoastSigner::new(
-                    &mut rng,
+                    rng,
                     frost.clone(),
                     frost_key,
                     i,
@@ -120,21 +137,25 @@ mod test {
             for signer_index in 0..n_parties {
                 // Check to see if this signer has recieved any nonces
                 let (sig, new_nonce) = match nonce_set[signer_index].clone() {
-                    // If we have nonces, sign and send sig and a new nonce
+                    // If the signer has a nonce shared, sign and send sig as well as a new nonce
                     Some(signing_nonces) => {
-                        let (sig, nonce) = signers[signer_index].sign(&mut rng, signing_nonces);
+                        let (mut sig, nonce) = signers[signer_index].sign(rng, signing_nonces);
+                        // If we are malcious, send a bogus signature to disrupt signing process
+                        if malicious_indexes.contains(&signer_index) {
+                            sig = Scalar::random(rng).mark_zero().public();
+                        }
                         (Some(sig), nonce)
                     }
                     // Otherwise, just create a new nonce
                     None => (
                         None,
                         signers[signer_index]
-                            .new_nonce(&mut rng)
+                            .new_nonce(rng)
                             .public(),
                     ),
                 };
                 // Send signature and our next nonce to ROAST
-                let response = roast.receive(signer_index, sig, new_nonce);
+                let response = roast.receive(signer_index, sig, new_nonce).unwrap();
                 nonces[signer_index] = new_nonce;
 
                 if response.combined_signature.is_some() {
@@ -161,9 +182,11 @@ mod test {
     proptest! {
             #[test]
             fn roast_proptest_t_of_n(
-                (n_parties, threshold) in (2usize..10).prop_flat_map(|n| (Just(n), 2usize..=n))
+                (n_parties, threshold, n_malicious) in (2usize..6).prop_flat_map(|n| (Just(n), 2usize..=n)).prop_flat_map(|(n, t)| (Just(n), Just(t), 0..=(n-t)))
             ) {
-            t_of_n_sequential(threshold, n_parties);
-        }
+                let mut rng = TestRng::deterministic_rng(RngAlgorithm::ChaCha);
+
+                t_of_n_sequential(threshold, n_parties, n_malicious, &mut rng);
+            }
     }
 }
