@@ -1,0 +1,80 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+          components: rustfmt
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+  # We want to test stable on multiple platforms with --all-features
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ["x86_64-unknown-linux-gnu", "armv7-unknown-linux-gnueabihf"]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: 1.60.0
+          target: ${{ matrix.target }}
+          override: true
+      - uses: Swatinem/rust-cache@v2.0.0
+
+      - name: test-on-target
+        uses: actions-rs/cargo@v1
+        with:
+          use-cross:  ${{ matrix.target != 'x86_64-unknown-linux-gnu' }}
+          command: test
+          args:  --all-features --release --target ${{ matrix.target }}
+
+  # test nightly build/test
+  test-nightly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          target: "x86_64-unknown-linux-gnu"
+          override: true
+      - uses: Swatinem/rust-cache@v2.0.0
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --release --all-features
+
+  doc-build:
+     name: doc-build
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v2
+       - uses: actions-rs/toolchain@v1
+         with:
+           profile: minimal
+           toolchain: nightly
+           override: true
+       - name: build-doc
+         # convoluted way to make it fail on warnings
+         run: "cargo doc --no-deps --workspace 2>&1 | tee /dev/fd/2 | grep -iEq '^(warning|error)' && exit 1 || exit 0"
