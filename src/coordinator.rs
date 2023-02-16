@@ -74,6 +74,10 @@ impl fmt::Display for RoastError {
 
 impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG> {
     /// Create a new ROAST [`Coordinator`] to receive signatures and nonces from signers
+    /// 
+    /// # Returns
+    /// 
+    /// Returns a Coordinator with a fresh state
     pub fn new(
         frost: Frost<H, NG>,
         frost_key: FrostKey<EvenY>,
@@ -103,6 +107,11 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
     /// Hopefully the comments are helpful in comparison.
     /// 
     /// [ROAST coordinator algorithm]: <https://eprint.iacr.org/2022/550.pdf>
+    /// 
+    /// # Returns
+    /// 
+    /// Returns a [`RoastResponse`] which contains an optional signature and nonce set.
+    /// Check the `recipients` field to determine who this message should be broadcast too.
     pub fn receive(
         &self,
         index: usize,
@@ -233,8 +242,8 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
 
             // Look up the nonces
             let r_signers = roast_state.responsive_signers.clone();
-            // we're not actually aggregating any nonces in this core yet since this will
-            // require changes to frost.rs
+            // we're not actually aggregating any nonces within the coordinator
+            // This is a change that would belong in the schnorr_fun frost code.
             let nonces: Vec<_> = r_signers
                 .iter()
                 .cloned()
@@ -250,7 +259,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                 .collect();
 
             let sid = roast_state.session_counter.clone();
-            // Clear responsive signers (otherwise we ban everyone and hang)
+            // Clear responsive signers for following rounds
             roast_state.responsive_signers = HashSet::new();
             roast_state.sessions.insert(
                 sid,
