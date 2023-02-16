@@ -11,12 +11,12 @@ secp256kfun = { version = "0.8.2", features = ["proptest"] }
 rand = "0.8.5"
 sha2 = "0.10"
 rng = "0.1.0"
-clightningrpc = "0.2.0"
-
 serde = { version = "1.0.117", features = ["derive"] }
 serde_json = "1.0.59"
-rocket = "0.5.0-rc.2"
-thiserror = "1.0.21"
 
-tokio = { version = "1", features = ["full"] }
-mini-redis = "0.4"
+[dev-dependencies]
+schnorr_fun = "0.8"
+
+[features]
+default = ["frost"]
+frost = []
