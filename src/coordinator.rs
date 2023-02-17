@@ -26,8 +26,6 @@ use crate::threshold_scheme::ThresholdScheme;
 // TODO: we may want to continue the roast coordinator state to the next message signing session
 // such that we keep our list of malicious or responsive signers. fn start_session() & Option<Message>?
 pub struct Coordinator<'a, S, K> {
-    // pub frost: Frost<H, NG>,
-    // pub frost_key: FrostKey<EvenY>,
     pub threshold_scheme: S,
     pub joint_key: K,
     n_signers: usize,

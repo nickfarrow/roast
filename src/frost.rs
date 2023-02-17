@@ -1,6 +1,6 @@
 use schnorr_fun::{
     frost::{Frost, FrostKey},
-    musig::Nonce,
+    musig::{Nonce, NonceKeyPair},
     Message, Signature,
 };
 use secp256kfun::{
@@ -15,6 +15,23 @@ use crate::threshold_scheme::ThresholdScheme;
 impl<H: Digest + Clone + Digest<OutputSize = U32>, NG> ThresholdScheme<FrostKey<EvenY>>
     for Frost<H, NG>
 {
+    fn gen_nonce<R: rand::RngCore>(&self, nonce_rng: &mut R) -> schnorr_fun::musig::NonceKeyPair {
+        NonceKeyPair::random(nonce_rng)
+    }
+
+    fn sign(
+        &self,
+        joint_key: FrostKey<EvenY>,
+        nonces: Vec<(usize, Nonce)>,
+        my_index: usize,
+        secret_share: &Scalar,
+        secret_nonce: schnorr_fun::musig::NonceKeyPair,
+        message: Message,
+    ) -> Scalar<Public, Zero> {
+        let session = self.start_sign_session(&joint_key, nonces, message);
+        self.sign(&joint_key, &session, my_index, &secret_share, secret_nonce)
+    }
+
     fn verify_signature_share(
         &self,
         joint_key: FrostKey<EvenY>,
