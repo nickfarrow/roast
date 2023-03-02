@@ -1,36 +1,35 @@
 //! ROAST Coordinator
-//! 
+//!
 //! The core algorithm for managing the state of a ROAST [`Coordinator`].
-//! 
+//!
 //! When a coordinator wants a message to be signed, each signer will first send the coordinator a nonce.
 //! Upon the coordinator receiving enough nonces, it should request those "responsive signers" to sign,
 //! and also to provide a new nonce for following signing rounds.
-//! 
+//!
 //! The ROAST coordinator keeps track of responsive and malicious signers in order to work towards a
 //! complete and valid signature.
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex}, fmt,
+    fmt,
+    sync::{Arc, Mutex},
 };
 
 use secp256kfun::{
-    digest::typenum::U32,
-    marker::{Public, Zero, EvenY},
+    marker::{Public, Zero},
     Scalar,
 };
 
-use schnorr_fun::{
-    frost::{Frost, FrostKey},
-    musig::Nonce,
-    Message, Signature,
-};
-use sha2::Digest;
+use schnorr_fun::{musig::Nonce, Message, Signature};
+
+use crate::threshold_scheme::ThresholdScheme;
 
 // TODO: we may want to continue the roast coordinator state to the next message signing session
 // such that we keep our list of malicious or responsive signers. fn start_session() & Option<Message>?
-pub struct Coordinator<'a, H, NG> {
-    pub frost: Frost<H, NG>,
-    pub frost_key: FrostKey<EvenY>,
+pub struct Coordinator<'a, S, K> {
+    pub threshold_scheme: S,
+    pub joint_key: K,
+    n_signers: usize,
+    threshold: usize,
     state: Arc<Mutex<RoastState<'a>>>,
 }
 
@@ -72,20 +71,25 @@ impl fmt::Display for RoastError {
     }
 }
 
-impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG> {
+// impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG> {
+impl<'a, S: ThresholdScheme<K>, K: Clone> Coordinator<'a, S, K> {
     /// Create a new ROAST [`Coordinator`] to receive signatures and nonces from signers
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns a Coordinator with a fresh state
     pub fn new(
-        frost: Frost<H, NG>,
-        frost_key: FrostKey<EvenY>,
+        threshold_scheme: S,
+        joint_key: K,
         message: Message<'a, Public>,
+        threshold: usize,
+        n_signers: usize,
     ) -> Self {
         return Self {
-            frost,
-            frost_key,
+            threshold_scheme,
+            joint_key,
+            n_signers,
+            threshold,
             state: Arc::new(Mutex::new(RoastState {
                 message,
                 responsive_signers: HashSet::new(),
@@ -98,18 +102,17 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
         };
     }
 
-    
     /// Receive a signature share and new nonce from a signer
-    /// 
+    ///
     /// For the first signing session, signers must first send just a nonce with None signature.
-    /// 
-    /// This function contains the core of *[ROAST paper's coordinator algorithm]* (Figure 4). 
+    ///
+    /// This function contains the core of *[ROAST paper's coordinator algorithm]* (Figure 4).
     /// Hopefully the comments are helpful in comparison.
-    /// 
+    ///
     /// [ROAST coordinator algorithm]: <https://eprint.iacr.org/2022/550.pdf>
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Returns a [`RoastResponse`] which contains an optional signature and nonce set.
     /// Check the `recipients` field to determine who this message should be broadcast too.
     pub fn receive(
@@ -138,7 +141,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
 
             // Mark malicious
             roast_state.malicious_signers.insert(index);
-            if roast_state.malicious_signers.len() > self.frost_key.n_signers() - self.frost_key.threshold() {
+            if roast_state.malicious_signers.len() > self.n_signers - self.threshold {
                 return Err(RoastError::TooFewHonest);
             }
 
@@ -156,33 +159,27 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                     "Party {} sent a signature for sign session {}",
                     index, session_id
                 );
-                // Get session from roast_state
-                let session = {
+                let nonces = {
                     let roast_session = roast_state
                         .sessions
                         .get(&session_id)
                         .unwrap()
                         .lock()
                         .expect("got lock");
-
-                    self.frost.start_sign_session(
-                        &self.frost_key.clone(),
-                        roast_session.nonces.clone(),
-                        roast_state.message,
-                    )
+                    roast_session.nonces.clone()
                 };
-
-                if !self.frost.verify_signature_share(
-                    &self.frost_key.clone(),
-                    &session,
+                if !self.threshold_scheme.verify_signature_share(
+                    self.joint_key.clone(),
+                    nonces.clone(),
                     index,
                     signature_share.expect(
                         "party unexpectedly provided None signature share for a sign session",
                     ),
+                    roast_state.message,
                 ) {
                     println!("Invalid signature, marking {} malicious.", index);
                     roast_state.malicious_signers.insert(index);
-                    if roast_state.malicious_signers.len() > self.frost_key.n_signers() - self.frost_key.threshold() {
+                    if roast_state.malicious_signers.len() > self.n_signers - self.threshold {
                         return Err(RoastError::TooFewHonest);
                     }
 
@@ -208,17 +205,18 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
                 println!("New signature from party {}", index);
 
                 // if we have t-of-n, combine!
-                if roast_session.sig_shares.len() >= self.frost_key.clone().threshold() {
+                if roast_session.sig_shares.len() >= self.threshold {
                     println!("We have the threshold number of signatures, combining!");
                     dbg!(&roast_session.sig_shares);
-                    let combined_sig = self.frost.combine_signature_shares(
-                        &self.frost_key.clone(),
-                        &session,
+                    let combined_sig = self.threshold_scheme.combine_signature_shares(
+                        self.joint_key.clone(),
+                        nonces.clone(),
                         roast_session.sig_shares.clone(),
+                        roast_state.message,
                     );
                     // return combined signature
                     return Ok(RoastResponse {
-                        recipients: (0..self.frost_key.n_signers()).collect(),
+                        recipients: (0..self.n_signers).collect(),
                         combined_signature: Some(combined_sig),
                         nonce_set: None,
                     });
@@ -235,7 +233,7 @@ impl<'a, H: Digest + Clone + Digest<OutputSize = U32>, NG> Coordinator<'a, H, NG
         roast_state.responsive_signers.insert(index);
 
         // if we now have t responsive signers:
-        if roast_state.responsive_signers.len() >= self.frost_key.clone().threshold() {
+        if roast_state.responsive_signers.len() >= self.threshold {
             println!("We now have threshold number of responsive signers!");
             dbg!(&roast_state.responsive_signers);
             roast_state.session_counter += 1;
